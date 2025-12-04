@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="ar">
+<head>
+  <meta charset="UTF-8" />
+  <title>لعبة المراحل والتحديات</title>
+  <style>
+    body {
+      direction: rtl;
+      text-align: center;
+      font-family: Arial, sans-serif;
+      margin: 0;
+      padding: 20px;
+    }
+
+    #status { margin: 10px 0; }
+
+    #game-area {
+      position: relative;
+      width: 100%;
+      max-width: 800px;
+      height: 420px;
+      border: 2px solid #222;
+      margin: 20px auto;
+      overflow: hidden;
+      border-radius: 8px;
+      background: #fafafa;
+    }
+
+    .btn-square {
+      position: absolute;
+      width: 100px;   /* نفس الحجم */
+      height: 60px;   /* نفس الحجم */
+      font-size: 18px;
+      border: none;
+      cursor: pointer;
+      background-color: #87CEFA; /* أزرق فاتح */
+      color: white;
+      border-radius: 8px;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.15);
+    }
+
+    #controls { margin: 10px 0; }
+    #controls button {
+      padding: 12px 18px;
+      font-size: 16px;
+      border: none;
+      cursor: pointer;
+      margin: 5px;
+      background-color: #4aa3ff;
+      color: white;
+      border-radius: 6px;
+    }
+
+    #continue-stop { margin-top: 10px; }
+    #continue-stop button {
+      display: none;
+      padding: 10px 16px;
+      font-size: 16px;
+      border: none;
+      cursor: pointer;
+      margin: 5px;
+      border-radius: 6px;
+    }
+    #continue-btn { background-color: #28a745; color: white; }
+    #stop-btn { background-color: #dc3545; color: white; }
+
+    #records { margin-top: 10px; font-size: 15px; line-height: 1.6; }
+  </style>
+</head>
+<body>
+  <h1>🎮 لعبة المراحل والتحديات</h1>
+
+  <div id="status">
+    <p id="message">اضغط إعادة تشغيل للبدء.</p>
+    <p id="stage">المرحلة: 1 (الهدف: 10)</p>
+    <p id="score">النقاط: 0 / 10</p>
+    <p id="timer">الوقت: 60</p>
+    <p id="record">الرقم القياسي: لم يُسجّل بعد</p>
+  </div>
+
+  <div id="game-area"></div>
+
+  <div id="controls">
+    <button id="restart">🔄 إعادة تشغيل</button>
+    <button id="pause">⏸️ إيقاف مؤقت</button>
+    <button id="resume">▶️ متابعة</button>
+  </div>
+
+  <div id="continue-stop">
+    <button id="continue-btn">استمرار ▶️</button>
+    <button id="stop-btn">توقف ⏹️</button>
+  </div>
+
+  <div id="records">أفضل النتائج: لا يوجد بعد</div>
+
+  <script>
+    // الحالة العامة
+    let score = 0;
+    let timeLeft = 60;
+    let gameStarted = false;
+    let paused = false;
+    let countdown = null;
+
+    // مراحل: 10 → 20 → ... → 100
+    const targets = [10,20,30,40,50,60,70,80,90,100];
+    let stageIndex = 0;
+
+    // أرقام قياسية
+    let recordTimeFinal = null; // أسرع زمن للوصول لـ 100
+    let topRecords = []; // أفضل 3 أزمنة للوصول لـ 100
+
+    // تحدي السرعة
+    let lastClickTime = Date.now();
+
+    // DOM
+    const gameArea = document.getElementById("game-area");
+    const message = document.getElementById("message");
+    const stageDisplay = document.getElementById("stage");
+    const scoreDisplay = document.getElementById("score");
+    const timerDisplay = document.getElementById("timer");
+    const recordDisplay = document.getElementById("record");
+    const recordsBoard = document.getElementById("records");
+
+    const restartBtn = document.getElementById("restart");
+    const pauseBtn = document.getElementById("pause");
+    const resumeBtn = document.getElementById("resume");
+    const continueBtn = document.getElementById("continue-btn");
+    const stopBtn = document.getElementById("stop-btn");
+
+    // تحديث الواجهة
+    function updateUI() {
+      const target = targets[stageIndex];
+      stageDisplay.textContent = `المرحلة: ${stageIndex + 1} (الهدف: ${target})`;
+      scoreDisplay.textContent = `النقاط: ${score} / ${target}`;
+      timerDisplay.textContent = `الوقت: ${timeLeft}`;
+      recordDisplay.textContent = recordTimeFinal == null
+        ? "الرقم القياسي: لم يُسجّل بعد"
+        : `الرقم القياسي: ${recordTimeFinal} ثانية`;
+    }
+
+    // مؤقت
+    function startTimer() {
+      clearInterval(countdown);
+      countdown = setInterval(() => {
+        if (!paused && timeLeft > 0) {
+          timeLeft--;
+          timerDisplay.textContent = `الوقت: ${timeLeft}`;
+          if (timeLeft <= 0) {
+            clearInterval(countdown);
+            endGame(true); // انتهى الوقت
+          }
+        }
+      }, 1000);
+    }
+
+    // توليد المربعات
+    function spawnSquares() {
+      gameArea.innerHTML = "";
+      // اضغطني يظهر دائمًا
+      createSquare("main", "اضغطني");
+      // خدعة بنسبة 40%
+      if (Math.random() < 0.4) createSquare("fake", "خدعة");
+      // ذهبي بنسبة 25%
+      if (Math.random() < 0.25) createSquare("gold", "ذهبي");
+    }
+
+    // إنشاء مربع بمكان عشوائي
+    function createSquare(type, label) {
+      const btn = document.createElement("button");
+      btn.className = "btn-square";
+      btn.textContent = label;
+
+      const areaW = gameArea.clientWidth;
+      const areaH = gameArea.clientHeight;
+      const btnW = 100, btnH = 60;
+
+      const maxX = Math.max(0, areaW - btnW);
+      const maxY = Math.max(0, areaH - btnH);
+
+      btn.style.left = Math.floor(Math.random() * (maxX + 1)) + "px";
+      btn.style.top = Math.floor(Math.random() * (maxY + 1)) + "px";
+
+      btn.addEventListener("click", () => handleClick(type));
+      gameArea.appendChild(btn);
+    }
+
+    // التعامل مع الضغط
+    function handleClick(type) {
+      if (paused || !gameStarted || timeLeft <= 0) return;
+
+      const now = Date.now();
+      const fastClick = (now - lastClickTime) < 1000; // أقل من ثانية
+      lastClickTime = now;
+
+      const target = targets[stageIndex];
+
+      if (type === "main") {
+        score += fastClick ? 2 : 1;
+      } else if (type === "fake") {
+        score = Math.max(0, score - 2);
+      } else if (type === "gold") {
+        score += 5;
+      }
+
+      scoreDisplay.textContent = `النقاط: ${score} / ${target}`;
+
+      // إعادة توليد المربعات بمكانات جديدة
+      spawnSquares();
+
+      // تحقق من إنهاء المرحلة
+      if (score >= target) {
+        clearInterval(countdown);
+        gameStarted = false;
+
+        if (target === 100) {
+          const timeUsed = 60 - timeLeft;
+          updateFinalRecord(timeUsed);
+          message.textContent = `🏆 مبروك! وصلت للهدف النهائي 100 كبسة خلال ${timeUsed} ثانية.`;
+          showContinueStop(false);
+        } else {
+          message.textContent = `🎯 ممتاز! أنهيت المرحلة ${stageIndex + 1}. هل تريد الاستمرار؟`;
+          showContinueStop(true);
+        }
+      }
+    }
+
+    // إظهار/إخفاء الأزرار
+    function showContinueStop(show) {
+      continueBtn.style.display = show ? "inline-block" : "none";
+      stopBtn.style.display = show ? "inline-block" : "none";
+    }
+
+    // نهاية اللعبة
+    function endGame(timeEnded = false) {
+      gameStarted = false;
+      showContinueStop(false);
+      if (timeEnded) {
+        message.textContent = `⏱️ انتهى الوقت! جمعت ${score} نقطة.`;
+      } else {
+        message.textContent = `⏹️ اللعبة توقفت عند ${score} نقطة.`;
+      }
+    }
+
+    // تحديث الأرقام القياسية
+    function updateFinalRecord(timeUsed) {
+      if (recordTimeFinal == null || timeUsed < recordTimeFinal) {
+        recordTimeFinal = timeUsed;
+      }
+      topRecords.push({ time: timeUsed });
+      topRecords.sort((a, b) => a.time - b.time);
+      if (topRecords.length > 3) topRecords = topRecords.slice(0, 3);
+
+      const text = topRecords.map((r, i) => `المركز ${i + 1}: ${r.time} ثانية`).join("<br>");
+      recordsBoard.innerHTML = `أفضل النتائج:<br>${text}`;
+      updateUI();
+    }
+
+    // إعادة تشغيل
+    function restartGame() {
+      clearInterval(countdown);
+      score = 0;
+      timeLeft = 60;
+      gameStarted = true;
+      paused = false;
+      stageIndex = 0;
+      lastClickTime = Date.now();
+
+      message.textContent = "🚀 اللعبة بدأت! اجمع الهدف الحالي.";
+      showContinueStop(false);
+      updateUI();
+      spawnSquares();
+      startTimer();
+    }
+
+    // استمرار للمرحلة التالية
+    function continueToNextStage() {
+      if (stageIndex < targets.length - 1) {
+        stageIndex++;
+        score = 0;
+        timeLeft = 60;
+        gameStarted = true;
+        paused = false;
+        lastClickTime = Date.now();
+
+        const target = targets[stageIndex];
+        message.textContent = `🚀 مرحلة جديدة! اجمع ${target} كبسة!`;
+        showContinueStop(false);
+        updateUI();
+        spawnSquares();
+        startTimer();
+      } else {
+        showContinueStop(false);
+      }
+    }
+
+    // توقف بعد المرحلة
+    function stopAfterStage() {
+      showContinueStop(false);
+      endGame(false);
+    }
+
+    // إيقاف مؤقت / متابعة
+    function pauseGame() {
+      if (!gameStarted) return;
+      paused = true;
+      message.textContent = "⏸️ اللعبة متوقفة مؤقتاً.";
+    }
+    function resumeGame() {
+      if (!gameStarted) return;
+      paused = false;
+      message.textContent = "▶️ اللعبة مستمرة.";
+    }
+
+    // ربط الأحداث
+    restartBtn.addEventListener("click", restartGame);
+    pauseBtn.addEventListener("click", pauseGame);
+    resumeBtn.addEventListener("click", resumeGame);
+    continueBtn.addEventListener("click", continueToNextStage);
+    stopBtn.addEventListener("click", stopAfterStage);
+
+    // تهيئة العرض الأولي
+    updateUI();
+  </script>
+</body>
+</html>
